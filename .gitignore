@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+outputs/
+*.egg-info/
+.pytest_cache/
+data/sample/brighton_beach_extracted/

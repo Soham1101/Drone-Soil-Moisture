@@ -1,0 +1,13 @@
+numpy
+pandas
+scikit-learn
+pykrige
+rasterio
+geopandas
+pyproj
+shapely
+requests
+click
+pytest
+pytest-mock
+pillow

@@ -1,0 +1,15 @@
+EPSG:4326
+# ODM Ground Control Point (GCP) file format.
+# One line per point: geo_x geo_y geo_z im_x im_y image_name [gcp_name]
+#   geo_x/geo_y/geo_z = real-world lon/lat/altitude (meters) of the point
+#   im_x/im_y         = pixel coordinates of that same point in one image
+#   image_name        = filename of that image (must match a file in images/)
+#
+# Since O4/Avata footage has no embedded GPS, pick 3-5 points visible in
+# multiple frames at known real-world locations (e.g. field corners surveyed
+# with a phone GPS or Google Earth) and identify their pixel coordinates in
+# QGIS or any image viewer. Example (replace with real values):
+#
+# -78.860000 35.720000 120 512 384 frame_0001.png corner_nw
+# -78.858000 35.720000 120 1200 400 frame_0001.png corner_ne
+# -78.860000 35.718000 118 480 900 frame_0005.png corner_sw
