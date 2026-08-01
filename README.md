@@ -30,7 +30,19 @@ python -m venv .venv
 .\.venv\Scripts\pip.exe install -r requirements.txt
 ```
 
-## Running the full pipeline
+## GUI
+
+A Streamlit app wraps the same pipeline with file uploaders, a run button,
+and inline results (map preview, RMSE/MAE, downloads):
+
+```powershell
+.\.venv\Scripts\streamlit.exe run app.py
+```
+
+or double-click `run_app.bat`. It opens at http://localhost:8501. Check "Use
+bundled synthetic demo data" to try it immediately with no inputs of your own.
+
+## Running the full pipeline (CLI)
 
 ```powershell
 .\.venv\Scripts\python.exe -m pipeline.cli run `
@@ -90,7 +102,12 @@ Individual stages can also be run separately: `extract`, `map`, `sample`,
 .\.venv\Scripts\python.exe -m pytest tests\ -v
 ```
 
-All 15 tests pass without Docker (the ODM/orthomosaic stage is tested with
+If pytest errors on cleanup with a `PermissionError` on a stale
+`pytest-of-<user>` temp folder (a Windows file-lock quirk, unrelated to the
+tests themselves — all tests will have already reported PASSED above it), run
+with `--basetemp=.\outputs\pytest_tmp` to sidestep it.
+
+All 18 tests pass without Docker (the ODM/orthomosaic stage is tested with
 mocks). A synthetic end-to-end run (no real flight data needed) is in
 `data/sample/generate_synthetic.py` — regenerate and run with:
 

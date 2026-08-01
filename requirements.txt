@@ -11,3 +11,4 @@ click
 pytest
 pytest-mock
 pillow
+streamlit

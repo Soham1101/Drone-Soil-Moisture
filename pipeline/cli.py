@@ -18,15 +18,11 @@ import click
 import pandas as pd
 
 from pipeline.frame_extraction import extract_frames
-from pipeline.model import leave_one_out_cv, predict_raster
+from pipeline.model import leave_one_out_cv
 from pipeline.orthomosaic import build_orthomosaic
+from pipeline.runner import run_pipeline
 from pipeline.sampling import sample_raster_at_points
 from pipeline.weather import get_weather
-
-WEATHER_FEATURE_KEYS = [
-    "precipitation_sum_lookback_mm",
-    "era5_soil_moisture_0_7cm_reference",
-]
 
 
 @click.group()
@@ -85,18 +81,8 @@ def model_cmd(training_csv, features, target, out_json):
     click.echo(f"RMSE={result['rmse']:.3f} MAE={result['mae']:.3f} -> {out_json}")
 
 
-def _build_training_table(tdr_csv: str, orthophoto: str, weather: dict) -> pd.DataFrame:
-    df = pd.read_csv(tdr_csv)
-    df = sample_raster_at_points(orthophoto, df)
-    df = df.rename(columns={"raster_value": "lst_value"})
-    df = df.dropna(subset=["lst_value"])
-    for key in WEATHER_FEATURE_KEYS:
-        df[key] = weather[key]
-    return df
-
-
 @cli.command("run")
-@click.option("--video", required=True, type=click.Path(exists=True))
+@click.option("--video", default=None, type=click.Path(exists=True))
 @click.option("--sensor", default="thermal", type=click.Choice(["thermal", "rgb"]))
 @click.option("--interval", default=2.0, type=float)
 @click.option("--tdr-csv", required=True, type=click.Path(exists=True))
@@ -113,61 +99,19 @@ def _build_training_table(tdr_csv: str, orthophoto: str, weather: dict) -> pd.Da
     help="Skip frame extraction + ODM and use an already-built orthophoto GeoTIFF instead.",
 )
 def run_cmd(video, sensor, interval, tdr_csv, gcp_file, site_lat, site_lon, date, out, orthomosaic_override):
-    out_dir = Path(out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    if orthomosaic_override:
-        orthophoto = orthomosaic_override
-        click.echo(f"Using existing orthomosaic: {orthophoto}")
-    else:
-        frames_dir = out_dir / "frames"
-        extract_frames(video, str(frames_dir), interval_s=interval, sensor_type=sensor)
-        click.echo(f"Frames extracted to {frames_dir}")
-
-        odm_dir = out_dir / "odm"
-        orthophoto = build_orthomosaic(str(frames_dir), str(odm_dir), gcp_file=gcp_file)
-        click.echo(f"Orthomosaic built: {orthophoto}")
-
-    weather = get_weather(site_lat, site_lon, date)
-    click.echo(f"Weather for {date} at ({site_lat}, {site_lon}): {weather}")
-
-    training_df = _build_training_table(tdr_csv, orthophoto, weather)
-    training_csv_path = out_dir / "training_table.csv"
-    training_df.to_csv(training_csv_path, index=False)
-
-    feature_cols = ["lst_value"] + [
-        k for k in WEATHER_FEATURE_KEYS if weather[k] is not None
-    ]
-    cv_result = leave_one_out_cv(training_df, feature_cols, "vwc_percent")
-    click.echo(f"Leave-one-out CV: RMSE={cv_result['rmse']:.3f} MAE={cv_result['mae']:.3f}")
-
-    extra_features = {k: weather[k] for k in feature_cols if k != "lst_value"}
-    map_path = out_dir / "vwc_prediction_map.tif"
-    predict_raster(
-        training_df,
-        feature_cols,
-        "vwc_percent",
-        orthophoto,
-        extra_features,
-        str(map_path),
-        lst_feature_col="lst_value",
+    run_pipeline(
+        tdr_csv=tdr_csv,
+        site_lat=site_lat,
+        site_lon=site_lon,
+        date=date,
+        out_dir=out,
+        video=video,
+        sensor=sensor,
+        interval=interval,
+        gcp_file=gcp_file,
+        orthomosaic_override=orthomosaic_override,
+        progress_cb=click.echo,
     )
-    click.echo(f"VWC prediction map: {map_path}")
-
-    report = {
-        "date": date,
-        "site_lat": site_lat,
-        "site_lon": site_lon,
-        "feature_cols": feature_cols,
-        "n_training_points": len(training_df),
-        "rmse": cv_result["rmse"],
-        "mae": cv_result["mae"],
-        "weather": weather,
-        "vwc_prediction_map": str(map_path),
-    }
-    report_path = out_dir / "validation_report.json"
-    report_path.write_text(json.dumps(report, indent=2))
-    click.echo(f"Validation report: {report_path}")
 
 
 if __name__ == "__main__":

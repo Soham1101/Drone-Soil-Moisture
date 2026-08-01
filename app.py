@@ -1,0 +1,168 @@
+"""Streamlit GUI for the soil moisture pipeline.
+
+Run with:
+    streamlit run app.py
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import shutil
+from pathlib import Path
+
+import streamlit as st
+
+from pipeline.preview import orthophoto_to_png, vwc_map_to_png
+from pipeline.runner import run_pipeline
+
+st.set_page_config(page_title="Soil Moisture Pipeline", layout="wide")
+st.title("Thermal UAV Soil Moisture Pipeline")
+st.caption(
+    "Upload drone footage + TDR probe readings to get a predicted volumetric "
+    "water content (VWC) map via regression kriging on land-surface temperature."
+)
+
+UPLOADS_DIR = Path("outputs/app_uploads")
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+SAMPLE_VIDEO = Path("data/sample/synthetic_flight.mp4")
+SAMPLE_TDR = Path("data/sample/tdr_readings.csv")
+SAMPLE_ORTHO = Path("data/sample/synthetic_orthomosaic.tif")
+
+
+def _save_upload(uploaded_file, subdir: str) -> str:
+    target_dir = UPLOADS_DIR / subdir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / uploaded_file.name
+    target_path.write_bytes(uploaded_file.getbuffer())
+    return str(target_path)
+
+
+use_demo_data = st.checkbox(
+    "Use bundled synthetic demo data instead of uploading files",
+    help="Runs the same synthetic dataset used to validate this pipeline, so you can see it work with no inputs of your own.",
+)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("Inputs")
+
+    orthomosaic_file = st.file_uploader(
+        "Pre-built orthomosaic GeoTIFF (optional — skips frame extraction + OpenDroneMap)",
+        type=["tif", "tiff"],
+        disabled=use_demo_data,
+    )
+    video_file = st.file_uploader(
+        "Drone video (.mp4)",
+        type=["mp4"],
+        disabled=use_demo_data or orthomosaic_file is not None,
+        help="Required unless a pre-built orthomosaic is supplied above.",
+    )
+    sensor = st.selectbox("Sensor type", ["thermal", "rgb"], disabled=use_demo_data)
+    interval = st.number_input(
+        "Frame extraction interval (seconds)", value=2.0, min_value=0.1, disabled=use_demo_data
+    )
+    gcp_file = st.file_uploader(
+        "GCP file (required if footage has no embedded GPS, e.g. O4/Avata DVR footage)",
+        type=["txt"],
+        disabled=use_demo_data,
+    )
+    tdr_file = st.file_uploader("TDR readings CSV", type=["csv"], disabled=use_demo_data)
+
+with col2:
+    st.subheader("Site + date")
+    site_lat = st.number_input("Site latitude", value=35.71, format="%.6f")
+    site_lon = st.number_input("Site longitude", value=-78.85, format="%.6f")
+    flight_date = st.date_input("Flight date", value=dt.date(2026, 7, 25))
+    run_name = st.text_input("Run name", value="run1")
+
+run_clicked = st.button("Run pipeline", type="primary")
+
+if run_clicked:
+    if use_demo_data:
+        video_path = str(SAMPLE_VIDEO)
+        tdr_path = str(SAMPLE_TDR)
+        ortho_path = str(SAMPLE_ORTHO)
+        gcp_path = None
+    else:
+        if not tdr_file:
+            st.error("A TDR readings CSV is required.")
+            st.stop()
+        if not video_file and not orthomosaic_file:
+            st.error("Provide either a drone video or a pre-built orthomosaic.")
+            st.stop()
+
+        tdr_path = _save_upload(tdr_file, "tdr")
+        video_path = _save_upload(video_file, "video") if video_file else None
+        ortho_path = _save_upload(orthomosaic_file, "ortho") if orthomosaic_file else None
+        gcp_path = _save_upload(gcp_file, "gcp") if gcp_file else None
+
+    out_dir = f"outputs/{run_name}"
+    if Path(out_dir).exists():
+        shutil.rmtree(out_dir)
+
+    status_box = st.status("Running pipeline...", expanded=True)
+    try:
+        report = run_pipeline(
+            tdr_csv=tdr_path,
+            site_lat=site_lat,
+            site_lon=site_lon,
+            date=flight_date.isoformat(),
+            out_dir=out_dir,
+            video=video_path,
+            sensor=sensor,
+            interval=interval,
+            gcp_file=gcp_path,
+            orthomosaic_override=ortho_path,
+            progress_cb=status_box.write,
+        )
+        status_box.update(label="Done", state="complete")
+        st.session_state["report"] = report
+    except Exception as exc:  # noqa: BLE001 -- surface any pipeline failure to the user
+        status_box.update(label="Failed", state="error")
+        st.error(f"Pipeline failed: {exc}")
+
+if "report" in st.session_state:
+    report = st.session_state["report"]
+    st.divider()
+    st.subheader("Results")
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Leave-one-out RMSE", f"{report['rmse']:.3f}")
+    m2.metric("Leave-one-out MAE", f"{report['mae']:.3f}")
+    m3.metric("Training points", report["n_training_points"])
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Orthomosaic**")
+        try:
+            st.image(orthophoto_to_png(report["orthomosaic"]))
+        except Exception:
+            st.caption("Orthomosaic preview unavailable for this raster.")
+    with right:
+        st.markdown("**Predicted VWC map** (tan = drier, blue = wetter)")
+        st.image(vwc_map_to_png(report["vwc_prediction_map"]))
+
+    st.markdown("**Weather at site + date**")
+    st.json(report["weather"])
+
+    d1, d2, d3 = st.columns(3)
+    with d1:
+        st.download_button(
+            "Download VWC map (GeoTIFF)",
+            data=Path(report["vwc_prediction_map"]).read_bytes(),
+            file_name="vwc_prediction_map.tif",
+        )
+    with d2:
+        st.download_button(
+            "Download training table (CSV)",
+            data=Path(report["training_table"]).read_bytes(),
+            file_name="training_table.csv",
+        )
+    with d3:
+        st.download_button(
+            "Download validation report (JSON)",
+            data=Path(report["validation_report"]).read_bytes(),
+            file_name="validation_report.json",
+        )
