@@ -22,3 +22,8 @@ WEATHER_DAILY_VARS = [
 PRECIP_LOOKBACK_DAYS = 7
 
 ODM_DOCKER_IMAGE = "opendronemap/odm"
+
+# Must match the port run_app.bat starts Streamlit on -- used to build a full
+# URL for images served from ./static/ so pydeck treats it as remote (see
+# pipeline/view3d.py for why a bare relative path doesn't work).
+APP_BASE_URL = "http://localhost:8765"

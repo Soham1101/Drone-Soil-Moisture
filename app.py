@@ -10,10 +10,12 @@ import datetime as dt
 import shutil
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 from pipeline.preview import orthophoto_to_png, vwc_map_to_png
 from pipeline.runner import run_pipeline
+from pipeline.view3d import build_3d_deck
 
 st.set_page_config(page_title="Soil Moisture Pipeline", layout="wide")
 st.title("Thermal UAV Soil Moisture Pipeline")
@@ -133,36 +135,68 @@ if "report" in st.session_state:
     m2.metric("Leave-one-out MAE", f"{report['mae']:.3f}")
     m3.metric("Training points", report["n_training_points"])
 
-    left, right = st.columns(2)
-    with left:
-        st.markdown("**Orthomosaic**")
+    tdr_df = pd.read_csv(report["training_table"])
+
+    tab_3d, tab_2d, tab_data = st.tabs(["3D Field View", "2D Map", "Weather + Downloads"])
+
+    with tab_3d:
+        st.caption(
+            "Drag to orbit, scroll to zoom, right-click-drag (or ctrl-drag) to tilt. "
+            "Bar height and color both encode predicted VWC; red points are TDR probe locations."
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        grid_size = c1.slider("Grid resolution", 5, 40, 20, key="grid_size")
+        elevation_scale = c2.slider(
+            "Elevation exaggeration (m)", 50, 3000, 400, step=50, key="elevation_scale"
+        )
+        pitch = c3.slider("Tilt", 0, 80, 45, key="pitch")
+        bearing = c4.slider("Rotate", 0, 360, 0, key="bearing")
         try:
-            st.image(orthophoto_to_png(report["orthomosaic"]))
-        except Exception:
-            st.caption("Orthomosaic preview unavailable for this raster.")
-    with right:
-        st.markdown("**Predicted VWC map** (tan = drier, blue = wetter)")
-        st.image(vwc_map_to_png(report["vwc_prediction_map"]))
+            deck = build_3d_deck(
+                report["vwc_prediction_map"],
+                report["orthomosaic"],
+                tdr_points=tdr_df[["lat", "lon", "vwc_percent"]],
+                grid_size=grid_size,
+                elevation_scale=elevation_scale,
+                pitch=pitch,
+                bearing=bearing,
+            )
+            st.pydeck_chart(deck, use_container_width=True, height=600)
+        except Exception as exc:  # noqa: BLE001 -- surface any rendering failure to the user
+            st.error(f"3D view failed: {exc}")
 
-    st.markdown("**Weather at site + date**")
-    st.json(report["weather"])
+    with tab_2d:
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**Orthomosaic**")
+            try:
+                st.image(orthophoto_to_png(report["orthomosaic"]))
+            except Exception:
+                st.caption("Orthomosaic preview unavailable for this raster.")
+        with right:
+            st.markdown("**Predicted VWC map** (tan = drier, blue = wetter)")
+            st.image(vwc_map_to_png(report["vwc_prediction_map"]))
 
-    d1, d2, d3 = st.columns(3)
-    with d1:
-        st.download_button(
-            "Download VWC map (GeoTIFF)",
-            data=Path(report["vwc_prediction_map"]).read_bytes(),
-            file_name="vwc_prediction_map.tif",
-        )
-    with d2:
-        st.download_button(
-            "Download training table (CSV)",
-            data=Path(report["training_table"]).read_bytes(),
-            file_name="training_table.csv",
-        )
-    with d3:
-        st.download_button(
-            "Download validation report (JSON)",
-            data=Path(report["validation_report"]).read_bytes(),
-            file_name="validation_report.json",
-        )
+    with tab_data:
+        st.markdown("**Weather at site + date**")
+        st.json(report["weather"])
+
+        d1, d2, d3 = st.columns(3)
+        with d1:
+            st.download_button(
+                "Download VWC map (GeoTIFF)",
+                data=Path(report["vwc_prediction_map"]).read_bytes(),
+                file_name="vwc_prediction_map.tif",
+            )
+        with d2:
+            st.download_button(
+                "Download training table (CSV)",
+                data=Path(report["training_table"]).read_bytes(),
+                file_name="training_table.csv",
+            )
+        with d3:
+            st.download_button(
+                "Download validation report (JSON)",
+                data=Path(report["validation_report"]).read_bytes(),
+                file_name="validation_report.json",
+            )

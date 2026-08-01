@@ -33,14 +33,29 @@ python -m venv .venv
 ## GUI
 
 A Streamlit app wraps the same pipeline with file uploaders, a run button,
-and inline results (map preview, RMSE/MAE, downloads):
+and inline results:
 
 ```powershell
-.\.venv\Scripts\streamlit.exe run app.py
+.\.venv\Scripts\streamlit.exe run app.py --server.port 8765 --server.enableStaticServing true
 ```
 
-or double-click `run_app.bat`. It opens at http://localhost:8501. Check "Use
+or double-click `run_app.bat`. It opens at http://localhost:8765. Check "Use
 bundled synthetic demo data" to try it immediately with no inputs of your own.
+
+**3D Field View** tab: a deck.gl view with the stitched orthomosaic draped
+flat on the ground and a grid of 3D columns extruded above it — column height
+*and* color both encode predicted VWC (tan = dry, blue = wet), with TDR probe
+locations marked in red. Drag to orbit, scroll to zoom, right-click-drag (or
+ctrl-drag) to tilt. Sliders control grid resolution, elevation exaggeration,
+tilt, and rotation. **2D Map** and **Weather + Downloads** tabs hold the flat
+map previews and file downloads.
+
+`--server.enableStaticServing true` is required — the 3D view publishes the
+orthomosaic preview to Streamlit's static file server (`./static/`, gitignored)
+rather than embedding it as a data URI, because Streamlit's pydeck bridge
+can't parse a `data:image/...;base64,...` string as an image prop. If you
+change the port in `run_app.bat`, also update `APP_BASE_URL` in
+`pipeline/config.py` to match — the 3D view builds an absolute URL from it.
 
 ## Running the full pipeline (CLI)
 
@@ -107,7 +122,7 @@ If pytest errors on cleanup with a `PermissionError` on a stale
 tests themselves — all tests will have already reported PASSED above it), run
 with `--basetemp=.\outputs\pytest_tmp` to sidestep it.
 
-All 18 tests pass without Docker (the ODM/orthomosaic stage is tested with
+All 21 tests pass without Docker (the ODM/orthomosaic stage is tested with
 mocks). A synthetic end-to-end run (no real flight data needed) is in
 `data/sample/generate_synthetic.py` — regenerate and run with:
 
