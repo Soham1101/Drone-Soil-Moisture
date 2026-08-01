@@ -72,6 +72,41 @@ def make_tdr_readings(vwc_true: np.ndarray, n_probes: int = 15, seed: int = 1) -
     return csv_path
 
 
+def make_veg_rgb_raster(seed: int = 2) -> Path:
+    """Synthetic RGB orthomosaic with a deliberate bare/non-germinated patch,
+    for demoing the crop-health (ExG) module without real Avata footage.
+    """
+    rng = np.random.default_rng(seed)
+    healthy_rgb = np.array([60, 150, 50])
+    bare_rgb = np.array([170, 130, 90])
+
+    rgb = np.tile(healthy_rgb, (GRID_SIZE, GRID_SIZE, 1)).astype(float)
+    rgb += rng.normal(0, 8, rgb.shape)
+
+    # A rectangular non-germinated patch plus a thin bare strip.
+    rgb[10:18, 5:15] = bare_rgb + rng.normal(0, 8, (8, 10, 3))
+    rgb[25:28, :] = bare_rgb + rng.normal(0, 8, (3, GRID_SIZE, 3))
+
+    rgb = np.clip(rgb, 0, 255).astype("uint8")
+
+    transform = from_origin(ORIGIN_LON, ORIGIN_LAT, PIXEL_SIZE_DEG, PIXEL_SIZE_DEG)
+    veg_path = SAMPLE_DIR / "synthetic_veg_rgb.tif"
+    with rasterio.open(
+        veg_path,
+        "w",
+        driver="GTiff",
+        height=GRID_SIZE,
+        width=GRID_SIZE,
+        count=3,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=transform,
+    ) as dst:
+        dst.write(np.moveaxis(rgb, -1, 0))
+
+    return veg_path
+
+
 def make_test_video(duration_s: int = 10, fps: int = 5) -> Path:
     video_path = SAMPLE_DIR / "synthetic_flight.mp4"
     subprocess.run(
@@ -94,6 +129,8 @@ if __name__ == "__main__":
     lst_path, vwc_true = make_orthomosaic()
     csv_path = make_tdr_readings(vwc_true)
     video_path = make_test_video()
+    veg_path = make_veg_rgb_raster()
     print(f"Orthomosaic: {lst_path}")
     print(f"TDR readings: {csv_path}")
     print(f"Test video: {video_path}")
+    print(f"Veg RGB raster: {veg_path}")

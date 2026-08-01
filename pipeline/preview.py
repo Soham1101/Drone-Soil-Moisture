@@ -8,6 +8,8 @@ import numpy as np
 import rasterio
 from PIL import Image
 
+from pipeline.problem_areas import DRY_HIGHLIGHT_COLOR, WET_HIGHLIGHT_COLOR
+
 DRY_COLOR = np.array([214, 174, 116])
 WET_COLOR = np.array([30, 90, 180])
 NODATA_COLOR = np.array([40, 40, 40])
@@ -31,12 +33,18 @@ def orthophoto_to_png(raster_path: str, max_size: int = 900) -> bytes:
     return buf.getvalue()
 
 
-def vwc_map_to_png(raster_path: str, max_size: int = 900) -> bytes:
+def vwc_map_to_png(
+    raster_path: str,
+    max_size: int = 900,
+    dry_value: float | None = None,
+    wet_value: float | None = None,
+) -> bytes:
     with rasterio.open(raster_path) as src:
         arr = src.read(1)
         nodata = src.nodata
 
-    valid = arr[arr != nodata] if nodata is not None else arr
+    valid_mask = arr != nodata if nodata is not None else np.ones_like(arr, dtype=bool)
+    valid = arr[valid_mask]
     lo, hi = valid.min(), valid.max()
     span = hi - lo if hi > lo else 1.0
     norm = np.clip((arr - lo) / span, 0, 1)
@@ -44,8 +52,13 @@ def vwc_map_to_png(raster_path: str, max_size: int = 900) -> bytes:
     rgb = (
         DRY_COLOR[None, None, :] * (1 - norm[..., None]) + WET_COLOR[None, None, :] * norm[..., None]
     ).astype("uint8")
+
+    if dry_value is not None:
+        rgb[(arr <= dry_value) & valid_mask] = DRY_HIGHLIGHT_COLOR
+    if wet_value is not None:
+        rgb[(arr >= wet_value) & valid_mask] = WET_HIGHLIGHT_COLOR
     if nodata is not None:
-        rgb[arr == nodata] = NODATA_COLOR
+        rgb[~valid_mask] = NODATA_COLOR
 
     img = Image.fromarray(rgb)
     img = img.resize((max_size, max_size), Image.NEAREST)

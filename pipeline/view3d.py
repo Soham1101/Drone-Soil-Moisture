@@ -16,6 +16,7 @@ import rasterio
 
 from pipeline.config import APP_BASE_URL, PROJECT_ROOT
 from pipeline.preview import DRY_COLOR, WET_COLOR, orthophoto_to_png
+from pipeline.problem_areas import DRY_HIGHLIGHT_COLOR, WET_HIGHLIGHT_COLOR
 
 # deck.gl's BitmapLayer needs a real URL, not a data: URI -- Streamlit's pydeck
 # JSON bridge tries to parse every string prop as an expression and chokes on
@@ -77,12 +78,21 @@ def _sample_grid(vwc_raster_path: str, grid_size: int) -> pd.DataFrame:
     return df
 
 
-def _vwc_to_color(vwc: pd.Series) -> list:
+def _vwc_to_color(
+    vwc: pd.Series, dry_value: float | None = None, wet_value: float | None = None
+) -> list:
     lo, hi = vwc.min(), vwc.max()
     span = hi - lo if hi > lo else 1.0
     norm = ((vwc - lo) / span).to_numpy()
-    colors = DRY_COLOR[None, :] * (1 - norm[:, None]) + WET_COLOR[None, :] * norm[:, None]
-    return colors.astype(int).tolist()
+    colors = (DRY_COLOR[None, :] * (1 - norm[:, None]) + WET_COLOR[None, :] * norm[:, None]).astype(int)
+
+    vwc_arr = vwc.to_numpy()
+    if dry_value is not None:
+        colors[vwc_arr <= dry_value] = DRY_HIGHLIGHT_COLOR
+    if wet_value is not None:
+        colors[vwc_arr >= wet_value] = WET_HIGHLIGHT_COLOR
+
+    return colors.tolist()
 
 
 def build_3d_deck(
@@ -93,9 +103,11 @@ def build_3d_deck(
     elevation_scale: float = 4000.0,
     pitch: float = 45.0,
     bearing: float = 0.0,
+    dry_value: float | None = None,
+    wet_value: float | None = None,
 ) -> pdk.Deck:
     grid_df = _sample_grid(vwc_raster_path, grid_size)
-    grid_df["fill_color"] = _vwc_to_color(grid_df["vwc"])
+    grid_df["fill_color"] = _vwc_to_color(grid_df["vwc"], dry_value, wet_value)
     grid_df["elevation"] = (grid_df["vwc"] - grid_df["vwc"].min()) / max(
         grid_df["vwc"].max() - grid_df["vwc"].min(), 1e-6
     ) * elevation_scale

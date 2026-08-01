@@ -13,8 +13,12 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from pipeline.frame_extraction import extract_frames
+from pipeline.orthomosaic import build_orthomosaic
 from pipeline.preview import orthophoto_to_png, vwc_map_to_png
+from pipeline.problem_areas import compute_dry_wet_thresholds, problem_area_fractions
 from pipeline.runner import run_pipeline
+from pipeline.vegetation import vegetation_health_to_png
 from pipeline.view3d import build_3d_deck
 
 st.set_page_config(page_title="Soil Moisture Pipeline", layout="wide")
@@ -30,6 +34,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 SAMPLE_VIDEO = Path("data/sample/synthetic_flight.mp4")
 SAMPLE_TDR = Path("data/sample/tdr_readings.csv")
 SAMPLE_ORTHO = Path("data/sample/synthetic_orthomosaic.tif")
+SAMPLE_VEG_RGB = Path("data/sample/synthetic_veg_rgb.tif")
 
 
 def _save_upload(uploaded_file, subdir: str) -> str:
@@ -137,6 +142,31 @@ if "report" in st.session_state:
 
     tdr_df = pd.read_csv(report["training_table"])
 
+    st.markdown(
+        "**Problem-area thresholds** — flag cells unusually dry/wet relative to "
+        "this field's own distribution (not an absolute agronomic standard)"
+    )
+    th1, th2 = st.columns(2)
+    dry_percentile = th1.slider("Dry threshold (bottom percentile)", 1, 40, 10, key="dry_percentile")
+    wet_percentile = th2.slider("Wet threshold (top percentile)", 60, 99, 90, key="wet_percentile")
+
+    dry_value, wet_value = compute_dry_wet_thresholds(
+        report["vwc_prediction_map"], dry_percentile, wet_percentile
+    )
+    dry_fraction, wet_fraction = problem_area_fractions(report["vwc_prediction_map"], dry_value, wet_value)
+
+    p1, p2 = st.columns(2)
+    p1.metric("Flagged dry area", f"{dry_fraction * 100:.1f}%", help=f"VWC <= {dry_value:.1f}%")
+    p2.metric("Flagged wet area", f"{wet_fraction * 100:.1f}%", help=f"VWC >= {wet_value:.1f}%")
+
+    highlight_problem_areas = st.checkbox(
+        "Highlight flagged areas on the maps below (red = dry, purple = wet)",
+        value=True,
+        key="highlight_problem_areas",
+    )
+    highlight_dry = dry_value if highlight_problem_areas else None
+    highlight_wet = wet_value if highlight_problem_areas else None
+
     tab_3d, tab_2d, tab_data = st.tabs(["3D Field View", "2D Map", "Weather + Downloads"])
 
     with tab_3d:
@@ -160,6 +190,8 @@ if "report" in st.session_state:
                 elevation_scale=elevation_scale,
                 pitch=pitch,
                 bearing=bearing,
+                dry_value=highlight_dry,
+                wet_value=highlight_wet,
             )
             st.pydeck_chart(deck, use_container_width=True, height=600)
         except Exception as exc:  # noqa: BLE001 -- surface any rendering failure to the user
@@ -174,8 +206,15 @@ if "report" in st.session_state:
             except Exception:
                 st.caption("Orthomosaic preview unavailable for this raster.")
         with right:
-            st.markdown("**Predicted VWC map** (tan = drier, blue = wetter)")
-            st.image(vwc_map_to_png(report["vwc_prediction_map"]))
+            st.markdown(
+                "**Predicted VWC map** (tan = drier, blue = wetter"
+                + (", red = flagged dry, purple = flagged wet)" if highlight_problem_areas else ")")
+            )
+            st.image(
+                vwc_map_to_png(
+                    report["vwc_prediction_map"], dry_value=highlight_dry, wet_value=highlight_wet
+                )
+            )
 
     with tab_data:
         st.markdown("**Weather at site + date**")
@@ -200,3 +239,83 @@ if "report" in st.session_state:
                 data=Path(report["validation_report"]).read_bytes(),
                 file_name="validation_report.json",
             )
+
+st.divider()
+st.subheader("Crop Health / Germination Monitoring (RGB)")
+st.caption(
+    "Independent of the soil-moisture model above — analyzes a separate RGB flight "
+    "(e.g. DJI Avata, no thermal camera) using Excess Green Index (ExG), a proxy for "
+    "live vegetation vs. bare soil, to flag likely non-germinated patches. No true "
+    "NDVI is possible without a near-infrared band."
+)
+
+use_veg_demo = st.checkbox(
+    "Use bundled synthetic RGB demo data",
+    key="use_veg_demo",
+    help="A synthetic RGB orthomosaic with a deliberate bare patch, so you can see this work with no footage of your own.",
+)
+veg_file = st.file_uploader(
+    "RGB orthomosaic GeoTIFF (pre-built) or RGB drone video (.mp4)",
+    type=["tif", "tiff", "mp4"],
+    key="veg_upload",
+    disabled=use_veg_demo,
+)
+bare_percentile = st.slider(
+    "Bare-soil sensitivity (bottom percentile of this field's own ExG flagged as bare)",
+    5,
+    60,
+    30,
+    key="bare_percentile",
+)
+analyze_clicked = st.button("Analyze crop health")
+
+if analyze_clicked:
+    if use_veg_demo:
+        veg_source_path = str(SAMPLE_VEG_RGB)
+    else:
+        if not veg_file:
+            st.error("Upload an RGB orthomosaic or RGB video first.")
+            st.stop()
+        veg_dir = Path("outputs/veg_uploads")
+        veg_dir.mkdir(parents=True, exist_ok=True)
+        veg_upload_path = veg_dir / veg_file.name
+        veg_upload_path.write_bytes(veg_file.getbuffer())
+        veg_source_path = str(veg_upload_path)
+
+    if veg_source_path.lower().endswith(".mp4"):
+        veg_status_box = st.status("Building orthomosaic from RGB video...", expanded=True)
+        try:
+            veg_dir = Path("outputs/veg_uploads")
+            frames_dir = veg_dir / "frames"
+            veg_status_box.write("Extracting frames...")
+            extract_frames(veg_source_path, str(frames_dir), interval_s=2.0, sensor_type="rgb")
+            veg_status_box.write("Building orthomosaic with OpenDroneMap (this can take several minutes)...")
+            odm_dir = veg_dir / "odm"
+            veg_ortho_path = build_orthomosaic(str(frames_dir), str(odm_dir))
+            veg_status_box.update(label="Done", state="complete")
+        except Exception as exc:  # noqa: BLE001 -- surface any pipeline failure to the user
+            veg_status_box.update(label="Failed", state="error")
+            st.error(f"Failed to build orthomosaic from video: {exc}")
+            st.stop()
+    else:
+        veg_ortho_path = veg_source_path
+
+    try:
+        veg_png_bytes, bare_fraction = vegetation_health_to_png(
+            veg_ortho_path, threshold_percentile=bare_percentile
+        )
+        st.session_state["veg_report"] = {
+            "png_bytes": veg_png_bytes,
+            "bare_fraction": bare_fraction,
+            "ortho_path": veg_ortho_path,
+        }
+    except Exception as exc:  # noqa: BLE001 -- surface any analysis failure to the user
+        st.error(f"Crop health analysis failed: {exc}")
+
+if "veg_report" in st.session_state:
+    veg_report = st.session_state["veg_report"]
+    st.metric("Flagged bare / non-germinated area", f"{veg_report['bare_fraction'] * 100:.1f}%")
+    st.image(
+        veg_report["png_bytes"],
+        caption="Green = healthy canopy, tan = sparse, red = flagged bare/non-germinated",
+    )

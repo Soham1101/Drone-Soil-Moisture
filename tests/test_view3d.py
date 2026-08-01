@@ -4,7 +4,8 @@ import pydeck as pdk
 import rasterio
 from rasterio.transform import from_origin
 
-from pipeline.view3d import build_3d_deck
+from pipeline.problem_areas import DRY_HIGHLIGHT_COLOR, WET_HIGHLIGHT_COLOR
+from pipeline.view3d import _vwc_to_color, build_3d_deck
 
 
 def _write_vwc_raster(path, nodata=-9999.0):
@@ -81,3 +82,26 @@ def test_build_3d_deck_image_is_remote_url_not_data_uri(tmp_path):
     image_value = str(bitmap_layer.image)
     assert image_value.startswith("http://")
     assert "data:image" not in image_value
+
+
+def test_vwc_to_color_highlights_dry_and_wet_values():
+    vwc = pd.Series([10.0, 20.0, 30.0, 40.0])
+    colors = _vwc_to_color(vwc, dry_value=15.0, wet_value=35.0)
+
+    assert colors[0] == DRY_HIGHLIGHT_COLOR.tolist()
+    assert colors[3] == WET_HIGHLIGHT_COLOR.tolist()
+    assert colors[1] not in (DRY_HIGHLIGHT_COLOR.tolist(), WET_HIGHLIGHT_COLOR.tolist())
+
+
+def test_build_3d_deck_passes_through_highlight_thresholds(tmp_path):
+    vwc_path = tmp_path / "vwc.tif"
+    ortho_path = tmp_path / "ortho.tif"
+    _write_vwc_raster(vwc_path)
+    _write_rgb_ortho(ortho_path)
+
+    deck = build_3d_deck(str(vwc_path), str(ortho_path), grid_size=4, dry_value=17.0, wet_value=33.0)
+
+    column_layer = deck.layers[1]
+    records = column_layer.data
+    assert records[0]["fill_color"] == DRY_HIGHLIGHT_COLOR.tolist()
+    assert records[-1]["fill_color"] == WET_HIGHLIGHT_COLOR.tolist()

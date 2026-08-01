@@ -57,6 +57,21 @@ can't parse a `data:image/...;base64,...` string as an image prop. If you
 change the port in `run_app.bat`, also update `APP_BASE_URL` in
 `pipeline/config.py` to match — the 3D view builds an absolute URL from it.
 
+**Problem-area thresholds**: sliders (in the main Results section) flag cells
+in the bottom/top percentile of *this field's own* VWC distribution as dry
+(red) or wet (purple), highlighted on both the 3D view and 2D map. These are
+relative outliers, not an absolute agronomic standard — tune the percentiles
+to taste.
+
+**Crop Health / Germination Monitoring** (bottom of the page): independent of
+the soil-moisture model — analyzes a *separate* RGB flight (e.g. DJI Avata,
+no thermal camera needed) via Excess Green Index (ExG), a proxy for live
+vegetation vs. bare soil, to flag likely non-germinated patches. No true NDVI
+is possible without a near-infrared band, so treat this as a proxy, not a
+calibrated vegetation index. Accepts a pre-built RGB orthomosaic GeoTIFF or a
+raw RGB video (frame-extracted + built via ODM the same way as the thermal
+flight). Check "Use bundled synthetic RGB demo data" to try it immediately.
+
 ## Running the full pipeline (CLI)
 
 ```powershell
@@ -122,7 +137,7 @@ If pytest errors on cleanup with a `PermissionError` on a stale
 tests themselves — all tests will have already reported PASSED above it), run
 with `--basetemp=.\outputs\pytest_tmp` to sidestep it.
 
-All 21 tests pass without Docker (the ODM/orthomosaic stage is tested with
+All 30 tests pass without Docker (the ODM/orthomosaic stage is tested with
 mocks). A synthetic end-to-end run (no real flight data needed) is in
 `data/sample/generate_synthetic.py` — regenerate and run with:
 

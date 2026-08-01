@@ -6,6 +6,11 @@ from PIL import Image
 from rasterio.transform import from_origin
 
 from pipeline.preview import orthophoto_to_png, vwc_map_to_png
+from pipeline.problem_areas import (
+    DRY_HIGHLIGHT_COLOR,
+    WET_HIGHLIGHT_COLOR,
+    compute_dry_wet_thresholds,
+)
 
 
 def _write_raster(path, count):
@@ -64,3 +69,30 @@ def test_orthophoto_and_vwc_map_render_at_same_size_regardless_of_source_size(tm
     vwc_size = Image.open(io.BytesIO(vwc_png)).size
 
     assert ortho_size == vwc_size == (900, 900)
+
+
+def test_vwc_map_to_png_highlights_dry_and_wet_pixels(tmp_path):
+    path = tmp_path / "vwc.tif"
+    transform = from_origin(-79.0, 36.0, 0.001, 0.001)
+    data = np.linspace(10, 40, 100, dtype="float32").reshape(10, 10)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=10,
+        width=10,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=transform,
+        nodata=-9999.0,
+    ) as dst:
+        dst.write(data, 1)
+
+    dry_value, wet_value = compute_dry_wet_thresholds(str(path), dry_percentile=10, wet_percentile=90)
+    png_bytes = vwc_map_to_png(str(path), max_size=10, dry_value=dry_value, wet_value=wet_value)
+    img = np.array(Image.open(io.BytesIO(png_bytes)).convert("RGB"))
+
+    assert tuple(img[0, 0]) == tuple(DRY_HIGHLIGHT_COLOR)
+    assert tuple(img[9, 9]) == tuple(WET_HIGHLIGHT_COLOR)
+    assert tuple(img[5, 5]) not in (tuple(DRY_HIGHLIGHT_COLOR), tuple(WET_HIGHLIGHT_COLOR))
