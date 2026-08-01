@@ -1,5 +1,8 @@
+import io
+
 import numpy as np
 import rasterio
+from PIL import Image
 from rasterio.transform import from_origin
 
 from pipeline.preview import orthophoto_to_png, vwc_map_to_png
@@ -44,3 +47,20 @@ def test_vwc_map_to_png_produces_valid_png(tmp_path):
     _write_raster(path, count=1)
     png_bytes = vwc_map_to_png(str(path))
     assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_orthophoto_and_vwc_map_render_at_same_size_regardless_of_source_size(tmp_path):
+    # A tiny 10x10 source raster (like our small synthetic test rasters) must not
+    # render smaller than the VWC map preview it's shown next to in the 2D Map tab.
+    ortho_path = tmp_path / "ortho.tif"
+    vwc_path = tmp_path / "vwc.tif"
+    _write_raster(ortho_path, count=3)
+    _write_raster(vwc_path, count=1)
+
+    ortho_png = orthophoto_to_png(str(ortho_path), max_size=900)
+    vwc_png = vwc_map_to_png(str(vwc_path), max_size=900)
+
+    ortho_size = Image.open(io.BytesIO(ortho_png)).size
+    vwc_size = Image.open(io.BytesIO(vwc_png)).size
+
+    assert ortho_size == vwc_size == (900, 900)

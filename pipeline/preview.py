@@ -25,7 +25,7 @@ def orthophoto_to_png(raster_path: str, max_size: int = 900) -> bytes:
             normalized = ((band - lo) / span * 255).astype("uint8")
             img = Image.fromarray(normalized, mode="L")
 
-    img.thumbnail((max_size, max_size))
+    img = img.resize((max_size, max_size), Image.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
