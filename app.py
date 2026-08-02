@@ -32,9 +32,20 @@ UPLOADS_DIR = Path("outputs/app_uploads")
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 SAMPLE_VIDEO = Path("data/sample/synthetic_flight.mp4")
-SAMPLE_TDR = Path("data/sample/tdr_readings.csv")
-SAMPLE_ORTHO = Path("data/sample/synthetic_orthomosaic.tif")
 SAMPLE_VEG_RGB = Path("data/sample/synthetic_veg_rgb.tif")
+
+SAMPLE_SCENARIOS = {
+    "Dry period": {
+        "tdr": Path("data/sample/tdr_readings.csv"),
+        "ortho": Path("data/sample/synthetic_orthomosaic.tif"),
+        "date": dt.date(2026, 7, 10),
+    },
+    "Post-rain": {
+        "tdr": Path("data/sample/tdr_readings_postrain.csv"),
+        "ortho": Path("data/sample/synthetic_orthomosaic_postrain.tif"),
+        "date": dt.date(2026, 7, 13),
+    },
+}
 
 
 def _save_upload(uploaded_file, subdir: str) -> str:
@@ -49,6 +60,14 @@ use_demo_data = st.checkbox(
     "Use bundled synthetic demo data instead of uploading files",
     help="Runs the same synthetic dataset used to validate this pipeline, so you can see it work with no inputs of your own.",
 )
+demo_scenario = "Dry period"
+if use_demo_data:
+    demo_scenario = st.selectbox(
+        "Demo scenario",
+        list(SAMPLE_SCENARIOS.keys()),
+        help="Two synthetic flights matching the syllabus's planned dry-period vs. post-rain comparison, "
+        "each with a deliberate dry/wet hotspot at the same field location.",
+    )
 
 col1, col2 = st.columns(2)
 
@@ -81,16 +100,22 @@ with col2:
     st.subheader("Site + date")
     site_lat = st.number_input("Site latitude", value=35.71, format="%.6f")
     site_lon = st.number_input("Site longitude", value=-78.85, format="%.6f")
-    flight_date = st.date_input("Flight date", value=dt.date(2026, 7, 25))
+    flight_date = st.date_input(
+        "Flight date",
+        value=SAMPLE_SCENARIOS[demo_scenario]["date"] if use_demo_data else dt.date(2026, 7, 25),
+        disabled=use_demo_data,
+        help="Set by the demo scenario above." if use_demo_data else None,
+    )
     run_name = st.text_input("Run name", value="run1")
 
 run_clicked = st.button("Run pipeline", type="primary")
 
 if run_clicked:
     if use_demo_data:
+        scenario = SAMPLE_SCENARIOS[demo_scenario]
         video_path = str(SAMPLE_VIDEO)
-        tdr_path = str(SAMPLE_TDR)
-        ortho_path = str(SAMPLE_ORTHO)
+        tdr_path = str(scenario["tdr"])
+        ortho_path = str(scenario["ortho"])
         gcp_path = None
     else:
         if not tdr_file:
